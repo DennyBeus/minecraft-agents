@@ -107,35 +107,49 @@ function playMp3(connection: VoiceConnection, mp3: Buffer): Promise<void> {
 export interface DiscordVoiceBridge { say(text: string): void; stop(): void }
 
 export async function startDiscordVoiceBridge(onTranscript: (text: string) => string | void | Promise<string | void>): Promise<DiscordVoiceBridge | null> {
+  const cfg = config.discord;
+  if (!cfg.token || !cfg.guildId || !cfg.voiceChannelId || !cfg.userId) {
+    log("Voice bridge disabled; configure token, guild, voice channel and allowed user ID.");
+    return null;
+  }
+  if (!config.openai.apiKey) throw new Error("Discord voice requires the OpenRouter API key");
+  if (![cfg.guildId, cfg.voiceChannelId, cfg.userId].every((id) => /^\d{15,25}$/.test(id))) {
+    throw new Error("Discord guild, channel and user IDs must be numeric IDs");
+  }
   let current: DiscordVoiceBridge | null = null;
   let stopped = false;
   let restarting = false;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  let controller = new AbortController();
+  const reconnect = async () => {
+    if (stopped) return;
+    controller = new AbortController();
+    try {
+      const bridge = await startSingleDiscordVoiceBridge(onTranscript, restart, controller.signal);
+      if (stopped) { bridge.stop(); return; }
+      current = bridge;
+      restarting = false;
+      log("Voice receiver connected");
+    } catch (error) {
+      if (stopped) return;
+      warn("Voice receiver connection failed; retrying in 10s", error);
+      retryTimer = setTimeout(reconnect, 10_000);
+    }
+  };
   const restart = () => {
     if (stopped || restarting) return;
     restarting = true;
+    controller.abort();
     current?.stop();
     current = null;
-    const reconnect = async () => {
-      if (stopped) return;
-      try {
-        current = await startSingleDiscordVoiceBridge(onTranscript, restart);
-        if (stopped) { current?.stop(); current = null; return; }
-        restarting = false;
-        log("Voice receiver rebuilt after missing UDP packets");
-      } catch (error) {
-        warn("Voice receiver reconnect failed; retrying in 10s", error);
-        retryTimer = setTimeout(reconnect, 10_000);
-      }
-    };
     retryTimer = setTimeout(reconnect, 1500);
   };
-  current = await startSingleDiscordVoiceBridge(onTranscript, restart);
-  if (!current) return null;
+  void reconnect();
   return {
     say: (text) => current?.say(text),
     stop: () => {
       stopped = true;
+      controller.abort();
       if (retryTimer) clearTimeout(retryTimer);
       current?.stop();
       current = null;
@@ -146,16 +160,9 @@ export async function startDiscordVoiceBridge(onTranscript: (text: string) => st
 async function startSingleDiscordVoiceBridge(
   onTranscript: (text: string) => string | void | Promise<string | void>,
   onStall: () => void,
-): Promise<DiscordVoiceBridge | null> {
+  signal: AbortSignal,
+): Promise<DiscordVoiceBridge> {
   const cfg = config.discord;
-  if (!cfg.token || !cfg.guildId || !cfg.voiceChannelId || !cfg.userId) {
-    log("Voice bridge disabled; configure token, guild, voice channel and allowed user ID.");
-    return null;
-  }
-  if (!config.openai.apiKey) throw new Error("Discord voice requires the OpenRouter API key");
-  if (![cfg.guildId, cfg.voiceChannelId, cfg.userId].every((id) => /^\d{15,25}$/.test(id))) {
-    throw new Error("Discord guild, channel and user IDs must be numeric IDs");
-  }
   const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] });
   client.on(Events.Error, (error) => warn("Gateway error", error));
   client.on(Events.Warn, (message) => warn(`Gateway warning: ${message}`));
@@ -170,11 +177,32 @@ async function startSingleDiscordVoiceBridge(
     const guild = await client.guilds.fetch(cfg.guildId);
     const channel = await guild.channels.fetch(cfg.voiceChannelId);
     if (!channel?.isVoiceBased()) throw new Error("Configured Discord channel is not a voice channel");
+    if (guild.voiceStates.cache.get(cfg.userId)?.channelId !== cfg.voiceChannelId) {
+      log("Waiting for the operator to enter the voice channel before Atlas joins");
+      await new Promise<void>((resolve, reject) => {
+        const cleanup = () => {
+          client.off(Events.VoiceStateUpdate, onVoiceState);
+          signal.removeEventListener("abort", onAbort);
+        };
+        const onVoiceState = (_oldState: unknown, newState: { id: string; channelId: string | null }) => {
+          if (newState.id !== cfg.userId || newState.channelId !== cfg.voiceChannelId) return;
+          cleanup();
+          resolve();
+        };
+        const onAbort = () => { cleanup(); reject(new Error("Voice receiver stopped while waiting for operator")); };
+        client.on(Events.VoiceStateUpdate, onVoiceState);
+        signal.addEventListener("abort", onAbort, { once: true });
+        if (signal.aborted) onAbort();
+      });
+    }
+    if (signal.aborted) throw new Error("Voice receiver stopped");
     connection = joinVoiceChannel({ channelId: (channel as VoiceBasedChannel).id, guildId: guild.id, adapterCreator: guild.voiceAdapterCreator, selfDeaf: false });
     connection.on("error", (error) => warn("Voice connection error", error));
     connection.on("stateChange", (previous, next) => log(`Voice connection: ${previous.status} -> ${next.status}`));
     await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
     log(`Voice connection ready; channel=${cfg.voiceChannelId}`);
+    const udp = (connection.state as { networking?: { state?: { udp?: { remote?: { ip?: string; port?: number } } } } }).networking?.state?.udp;
+    if (udp?.remote) log(`Voice UDP endpoint: ${udp.remote.ip}:${udp.remote.port}`);
   } catch (error) { client.destroy(); throw new Error(`Discord voice connection failed: ${String(error)}`); }
 
   const playerQueue: { current: Promise<void> } = { current: Promise.resolve() };
@@ -205,8 +233,9 @@ async function startSingleDiscordVoiceBridge(
     trackUdp();
     const operatorPresent = client.guilds.cache.get(cfg.guildId)?.voiceStates.cache.get(cfg.userId)?.channelId === cfg.voiceChannelId;
     if (operatorPresent) {
-      log(`Receive status: ${connection.state.status}, UDP packets=${udpPackets}, operator SSRC=${Boolean(connection.receiver.ssrcMap.get(cfg.userId))}, capturing=${capturing}, queued=${pending.length}`);
-      if (Date.now() - lastUdpAt > 90_000) {
+      const operatorSsrc = Boolean(connection.receiver.ssrcMap.get(cfg.userId));
+      log(`Receive status: ${connection.state.status}, UDP packets=${udpPackets}, operator SSRC=${operatorSsrc}, capturing=${capturing}, queued=${pending.length}`);
+      if (operatorSsrc && Date.now() - lastUdpAt > 90_000) {
         warn("No incoming UDP for 90s while operator is present; rebuilding voice receiver");
         onStall();
       }
@@ -214,6 +243,13 @@ async function startSingleDiscordVoiceBridge(
       lastUdpAt = Date.now();
     }
   }, 30_000);
+  const onOperatorState = (_oldState: unknown, newState: { id: string; channelId: string | null }) => {
+    if (newState.id === cfg.userId && newState.channelId !== cfg.voiceChannelId) {
+      log("Operator left voice channel; Atlas will leave and wait for operator to return");
+      onStall();
+    }
+  };
+  client.on(Events.VoiceStateUpdate, onOperatorState);
   const pending: Buffer[] = [];
   const processQueue = async () => {
     if (processing) return;
@@ -255,5 +291,5 @@ async function startSingleDiscordVoiceBridge(
     });
   });
   log(`Listening in voice channel ${cfg.voiceChannelId} for user ${cfg.userId}`);
-  return { say, stop: () => { if (stopped) return; stopped = true; clearInterval(diagnostics); pending.length = 0; connection.destroy(); client.destroy(); } };
+  return { say, stop: () => { if (stopped) return; stopped = true; clearInterval(diagnostics); client.off(Events.VoiceStateUpdate, onOperatorState); pending.length = 0; connection.destroy(); client.destroy(); } };
 }
