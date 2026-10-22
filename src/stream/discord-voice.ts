@@ -106,7 +106,47 @@ function playMp3(connection: VoiceConnection, mp3: Buffer): Promise<void> {
 
 export interface DiscordVoiceBridge { say(text: string): void; stop(): void }
 
-export async function startDiscordVoiceBridge(onTranscript: (text: string) => void): Promise<DiscordVoiceBridge | null> {
+export async function startDiscordVoiceBridge(onTranscript: (text: string) => string | void | Promise<string | void>): Promise<DiscordVoiceBridge | null> {
+  let current: DiscordVoiceBridge | null = null;
+  let stopped = false;
+  let restarting = false;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  const restart = () => {
+    if (stopped || restarting) return;
+    restarting = true;
+    current?.stop();
+    current = null;
+    const reconnect = async () => {
+      if (stopped) return;
+      try {
+        current = await startSingleDiscordVoiceBridge(onTranscript, restart);
+        if (stopped) { current?.stop(); current = null; return; }
+        restarting = false;
+        log("Voice receiver rebuilt after missing UDP packets");
+      } catch (error) {
+        warn("Voice receiver reconnect failed; retrying in 10s", error);
+        retryTimer = setTimeout(reconnect, 10_000);
+      }
+    };
+    retryTimer = setTimeout(reconnect, 1500);
+  };
+  current = await startSingleDiscordVoiceBridge(onTranscript, restart);
+  if (!current) return null;
+  return {
+    say: (text) => current?.say(text),
+    stop: () => {
+      stopped = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      current?.stop();
+      current = null;
+    },
+  };
+}
+
+async function startSingleDiscordVoiceBridge(
+  onTranscript: (text: string) => string | void | Promise<string | void>,
+  onStall: () => void,
+): Promise<DiscordVoiceBridge | null> {
   const cfg = config.discord;
   if (!cfg.token || !cfg.guildId || !cfg.voiceChannelId || !cfg.userId) {
     log("Voice bridge disabled; configure token, guild, voice channel and allowed user ID.");
@@ -149,13 +189,14 @@ export async function startDiscordVoiceBridge(onTranscript: (text: string) => vo
   let capturing = false;
   let processing = false;
   let udpPackets = 0;
+  let lastUdpAt = Date.now();
   let trackedUdp: { on(event: string, listener: () => void): void } | undefined;
   const trackUdp = () => {
     const state = connection.state as { networking?: { state?: { udp?: typeof trackedUdp } } };
     const udp = state.networking?.state?.udp;
     if (!udp || udp === trackedUdp) return;
     trackedUdp = udp;
-    udp.on("message", () => { udpPackets++; });
+    udp.on("message", () => { udpPackets++; lastUdpAt = Date.now(); });
   };
   trackUdp();
   connection.on("stateChange", trackUdp);
@@ -163,7 +204,15 @@ export async function startDiscordVoiceBridge(onTranscript: (text: string) => vo
     if (stopped) return;
     trackUdp();
     const operatorPresent = client.guilds.cache.get(cfg.guildId)?.voiceStates.cache.get(cfg.userId)?.channelId === cfg.voiceChannelId;
-    if (operatorPresent) log(`Receive status: ${connection.state.status}, UDP packets=${udpPackets}, operator SSRC=${Boolean(connection.receiver.ssrcMap.get(cfg.userId))}, capturing=${capturing}, queued=${pending.length}`);
+    if (operatorPresent) {
+      log(`Receive status: ${connection.state.status}, UDP packets=${udpPackets}, operator SSRC=${Boolean(connection.receiver.ssrcMap.get(cfg.userId))}, capturing=${capturing}, queued=${pending.length}`);
+      if (Date.now() - lastUdpAt > 90_000) {
+        warn("No incoming UDP for 90s while operator is present; rebuilding voice receiver");
+        onStall();
+      }
+    } else {
+      lastUdpAt = Date.now();
+    }
   }, 30_000);
   const pending: Buffer[] = [];
   const processQueue = async () => {
@@ -175,8 +224,8 @@ export async function startDiscordVoiceBridge(onTranscript: (text: string) => vo
         if (stopped) break;
         if (!text) continue;
         log(`Transcript from ${cfg.userId}: ${text}`);
-        onTranscript(text);
-        say("Слышу вас. Передаю задание Атласу.");
+        const reply = await onTranscript(text);
+        say(reply || "Слышу вас. Передаю задание Атласу.");
       } catch (error) { warn("Transcription or command handling failed", error); }
     }
     processing = false;

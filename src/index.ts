@@ -79,7 +79,7 @@ async function startBot(
     overlayStarted.value = true;
   }
 
-  const { bot, queueChat, stop } = await createBot(
+  const { bot, queueChat, followPlayer, stopFollowing, stop } = await createBot(
     {
       onThought: (thought) => console.log(`[${roleConfig.name}] 💭 ${thought}`),
       onAction: (action, result) => console.log(`[${roleConfig.name}] 🎮 [${action}] ${result}`),
@@ -94,8 +94,21 @@ async function startBot(
 
   if (roleConfig.name === "Atlas") {
     discord = await startDiscordVoiceBridge((message) => {
-      queueChat({ source: "discord", username: "Discord operator", message, timestamp: Date.now() });
+      const command = message.toLowerCase().replace(/[.,!?]/g, " ").replace(/\s+/g, " ").trim();
       addChatMessage("Discord operator", message, "free");
+      if (/(?:^| )(?:не следуй за мной|стой|остановись|перестань следовать|хватит)(?:$| )/u.test(command)) {
+        console.log(`[Discord] Operator command: stop following`);
+        return stopFollowing() ? "Остановился. Снова действую самостоятельно." : "Я уже стою.";
+      }
+      if (/(?:^| )(?:следуй за мной|иди за мной|подойди ко мне|иди ко мне|подходи ко мне|follow me|come to me)(?:$| )/u.test(command)) {
+        const playerName = config.bot.commandWhitelist[0];
+        console.log(`[Discord] Operator command: follow ${playerName || "<unconfigured>"}`);
+        return playerName ? followPlayer(playerName) : "Укажите ваш игровой ник в BOT_COMMAND_WHITELIST.";
+      }
+      stopFollowing();
+      queueChat({ source: "discord", username: "Discord operator", message, timestamp: Date.now() });
+      console.log(`[Discord] Operator command queued for planning`);
+      return "Слышу вас. Передаю задание Атласу.";
     }).catch((error) => { console.warn("[Discord] Could not start voice bridge:", error); return null; });
   }
 
