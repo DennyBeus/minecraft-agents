@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit",
     "dev": "tsx watch --exclude \"src/skills/**\" --exclude \"skills/voyager/**\" --exclude \"skills/generated/**\" src/index.ts --hot-reload-skills",
     "start": "NODE_USE_ENV_PROXY=1 NODE_TLS_REJECT_UNAUTHORIZED=1 node --require ./scripts/discord-proxy.cjs --import tsx --max-old-space-size=8192 src/index.ts",
+    "voice:windows": "node --import tsx src/stream/discord-windows.ts",
     "server": "cd server && java -Xmx2G -Xms1G -jar paper.jar --nogui",
     "download-skills": "node scripts/download-voyager-skills.mjs",
     "test": "node scripts/test-runner.mjs",

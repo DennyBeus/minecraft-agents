@@ -15,6 +15,7 @@ import { assertGeneratedSandboxAvailable, getSandboxPolicyHash } from "./skills/
 import { getBuiltInSkillNames, getGeneratedSkillNames } from "./skills/registry.js";
 import { recordRuntimeConfiguration } from "./data/runtime-configuration.js";
 import { startDiscordVoiceBridge, type DiscordVoiceBridge } from "./stream/discord-voice.js";
+import { startDiscordCommandRelay } from "./stream/discord-command-relay.js";
 
 /** Live bot handles, so the heap guard can abort a runaway skill. */
 const LIVE_BOTS = new Map<string, Bot>();
@@ -65,6 +66,7 @@ async function startBot(
   overlayStarted: { value: boolean },
 ): Promise<string> {
   let discord: DiscordVoiceBridge | null = null;
+  let stopDiscordRelay: (() => void) | null = null;
   console.log(`\n=== ${roleConfig.name} (${roleConfig.role}) (restart #${restartCount}) ===`);
   const fastLabel = config.llm.fastModel !== config.llm.model ? ` (fast decisions: ${config.llm.fastModel})` : "";
   const endpoint = config.llm.provider === "openai" ? config.openai.baseUrl : config.ollama.host;
@@ -79,7 +81,7 @@ async function startBot(
     overlayStarted.value = true;
   }
 
-  const { bot, queueChat, stop } = await createBot(
+  const { bot, queueChat, followPlayer, stopFollowing, stop } = await createBot(
     {
       onThought: (thought) => console.log(`[${roleConfig.name}] 💭 ${thought}`),
       onAction: (action, result) => console.log(`[${roleConfig.name}] 🎮 [${action}] ${result}`),
@@ -93,10 +95,25 @@ async function startBot(
   LIVE_BOTS.set(roleConfig.name, bot);
 
   if (roleConfig.name === "Atlas") {
-    discord = await startDiscordVoiceBridge((message) => {
+    const onOperatorCommand = (message: string): string => {
+      const command = message.toLowerCase().replace(/[.,!?]/g, " ").replace(/\s+/g, " ").trim();
+      if (/(?:^| )следуй за мной(?:$| )|(?:^| )иди за мной(?:$| )|(?:^| )follow me(?:$| )/u.test(command)) {
+        const playerName = config.bot.commandWhitelist[0];
+        return playerName ? followPlayer(playerName) : "Укажите имя игрока в BOT_COMMAND_WHITELIST.";
+      }
+      if (/^(?:атлас )?(?:стой|остановись|перестань следовать|хватит)$/u.test(command)) {
+        return stopFollowing() ? "Остановился. Снова действую самостоятельно." : "Я уже стою.";
+      }
+      stopFollowing();
       queueChat({ source: "discord", username: "Discord operator", message, timestamp: Date.now() });
       addChatMessage("Discord operator", message, "free");
-    }).catch((error) => { console.warn(`[Discord] Could not start voice bridge: ${String(error)}`); return null; });
+      return "Слышу вас. Передаю задание Атласу.";
+    };
+    if (config.discord.voiceRemote) {
+      stopDiscordRelay = startDiscordCommandRelay(config.discord.relaySecret, config.discord.relayPort, onOperatorCommand);
+    } else {
+      discord = await startDiscordVoiceBridge(onOperatorCommand).catch((error) => { console.warn(`[Discord] Could not start voice bridge: ${String(error)}`); return null; });
+    }
   }
 
   // Set up Twitch chat (Atlas only — Flora doesn't need her own chat connection)
@@ -115,6 +132,7 @@ async function startBot(
     const cleanup = () => {
       stop();
       discord?.stop();
+      stopDiscordRelay?.();
       twitch?.client.disconnect();
     };
     activeStops.push(cleanup);
@@ -131,6 +149,7 @@ async function startBot(
       removeCleanup();
       stop();
       discord?.stop();
+      stopDiscordRelay?.();
       twitch?.client.disconnect();
       resolve(lastKickReason);
     });
@@ -140,6 +159,7 @@ async function startBot(
       removeCleanup();
       stop();
       discord?.stop();
+      stopDiscordRelay?.();
       twitch?.client.disconnect();
       resolve(lastKickReason);
     });

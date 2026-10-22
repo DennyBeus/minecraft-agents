@@ -93,7 +93,7 @@ function playMp3(connection: VoiceConnection, mp3: Buffer): Promise<void> {
 
 export interface DiscordVoiceBridge { say(text: string): void; stop(): void }
 
-export async function startDiscordVoiceBridge(onTranscript: (text: string) => void): Promise<DiscordVoiceBridge | null> {
+export async function startDiscordVoiceBridge(onTranscript: (text: string) => string | void | Promise<string | void>): Promise<DiscordVoiceBridge | null> {
   const cfg = config.discord;
   if (!cfg.token || !cfg.guildId || !cfg.voiceChannelId || !cfg.userId) {
     console.log("[Discord] Voice bridge disabled; configure token, guild, voice channel and allowed user ID.");
@@ -130,6 +130,35 @@ export async function startDiscordVoiceBridge(onTranscript: (text: string) => vo
   let stopped = false;
   let capturing = false;
   let processing = false;
+  let lastAudioAt = Date.now();
+  let lastRejoinAt = Date.now();
+  let udpPackets = 0;
+  let trackedUdp: { on(event: string, listener: () => void): void } | undefined;
+  const trackUdp = () => {
+    const state = connection.state as { networking?: { state?: { udp?: typeof trackedUdp } } };
+    const udp = state.networking?.state?.udp;
+    if (!udp || udp === trackedUdp) return;
+    trackedUdp = udp;
+    udp.on("message", () => { udpPackets++; });
+  };
+  trackUdp();
+  connection.on("stateChange", (oldState, newState) => {
+    if (oldState.status !== newState.status) console.log(`[Discord] Voice connection: ${oldState.status} -> ${newState.status}`);
+    trackUdp();
+  });
+  const receiveWatchdog = setInterval(() => {
+    if (stopped) return;
+    const operatorPresent = client.guilds.cache.get(cfg.guildId)?.voiceStates.cache.get(cfg.userId)?.channelId === cfg.voiceChannelId;
+    trackUdp();
+    if (operatorPresent) {
+      const mapped = Boolean(connection.receiver.ssrcMap.get(cfg.userId));
+      console.log(`[Discord] Receive status: ${connection.state.status}, UDP packets: ${udpPackets}, operator SSRC: ${mapped}`);
+    }
+    if (!operatorPresent || Date.now() - lastAudioAt < 120_000 || Date.now() - lastRejoinAt < 120_000) return;
+    lastRejoinAt = Date.now();
+    console.warn(`[Discord] No incoming audio for 2 minutes while operator is present; refreshing voice connection`);
+    connection.rejoin();
+  }, 30_000);
   const pending: Buffer[] = [];
   const processQueue = async () => {
     if (processing) return;
@@ -140,14 +169,15 @@ export async function startDiscordVoiceBridge(onTranscript: (text: string) => vo
         if (stopped) break;
         if (!text) continue;
         console.log(`[Discord] ${cfg.userId}: ${text}`);
-        onTranscript(text);
-        say("Слышу вас. Передаю задание Атласу.");
+        const reply = await onTranscript(text);
+        say(reply || "Слышу вас. Передаю задание Атласу.");
       } catch (error) { console.warn(`[Discord] Transcription failed: ${String(error)}`); }
     }
     processing = false;
   };
   connection.receiver.speaking.on("start", (userId) => {
     if (stopped || userId !== cfg.userId || capturing) return;
+    lastAudioAt = Date.now();
     capturing = true;
     const opus = connection.receiver.subscribe(userId, { end: { behavior: EndBehaviorType.AfterSilence, duration: 800 } });
     const decoder = new prism.opus.Decoder({ rate: 48_000, channels: 2, frameSize: 960 });
@@ -169,5 +199,5 @@ export async function startDiscordVoiceBridge(onTranscript: (text: string) => vo
     });
   });
   console.log(`[Discord] Listening in voice channel ${cfg.voiceChannelId} for user ${cfg.userId}`);
-  return { say, stop: () => { if (stopped) return; stopped = true; pending.length = 0; connection.destroy(); client.destroy(); } };
+  return { say, stop: () => { if (stopped) return; stopped = true; clearInterval(receiveWatchdog); pending.length = 0; connection.destroy(); client.destroy(); } };
 }
