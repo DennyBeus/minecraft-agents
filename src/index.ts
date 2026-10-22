@@ -14,6 +14,7 @@ import { loadApprovedGeneratedSkills } from "./skills/generated-runtime.js";
 import { assertGeneratedSandboxAvailable, getSandboxPolicyHash } from "./skills/generated-sandbox.js";
 import { getBuiltInSkillNames, getGeneratedSkillNames } from "./skills/registry.js";
 import { recordRuntimeConfiguration } from "./data/runtime-configuration.js";
+import { startDiscordVoiceBridge, type DiscordVoiceBridge } from "./stream/discord-voice.js";
 
 /** Live bot handles, so the heap guard can abort a runaway skill. */
 const LIVE_BOTS = new Map<string, Bot>();
@@ -63,6 +64,7 @@ async function startBot(
   restartCount: number,
   overlayStarted: { value: boolean },
 ): Promise<string> {
+  let discord: DiscordVoiceBridge | null = null;
   console.log(`\n=== ${roleConfig.name} (${roleConfig.role}) (restart #${restartCount}) ===`);
   const fastLabel = config.llm.fastModel !== config.llm.model ? ` (fast decisions: ${config.llm.fastModel})` : "";
   const endpoint = config.llm.provider === "openai" ? config.openai.baseUrl : config.ollama.host;
@@ -81,7 +83,7 @@ async function startBot(
     {
       onThought: (thought) => console.log(`[${roleConfig.name}] 💭 ${thought}`),
       onAction: (action, result) => console.log(`[${roleConfig.name}] 🎮 [${action}] ${result}`),
-      onChat: (message) => console.log(`[${roleConfig.name}] 💬 ${message}`),
+      onChat: (message) => { console.log(`[${roleConfig.name}] 💬 ${message}`); discord?.say(message); },
     },
     roleConfig,
   );
@@ -89,6 +91,13 @@ async function startBot(
   // Register for the heap guard, which needs live bot handles to abort a
   // runaway skill before it takes the whole process down.
   LIVE_BOTS.set(roleConfig.name, bot);
+
+  if (roleConfig.name === "Atlas") {
+    discord = await startDiscordVoiceBridge((message) => {
+      queueChat({ source: "discord", username: "Discord operator", message, timestamp: Date.now() });
+      addChatMessage("Discord operator", message, "free");
+    }).catch((error) => { console.warn(`[Discord] Could not start voice bridge: ${String(error)}`); return null; });
+  }
 
   // Set up Twitch chat (Atlas only — Flora doesn't need her own chat connection)
   const twitch =
@@ -105,6 +114,7 @@ async function startBot(
     // Register this bot's cleanup in the shared shutdown registry
     const cleanup = () => {
       stop();
+      discord?.stop();
       twitch?.client.disconnect();
     };
     activeStops.push(cleanup);
@@ -120,6 +130,7 @@ async function startBot(
       lastKickReason = reasonStr;
       removeCleanup();
       stop();
+      discord?.stop();
       twitch?.client.disconnect();
       resolve(lastKickReason);
     });
@@ -128,6 +139,7 @@ async function startBot(
       console.log(`[${roleConfig.name}] Connection ended.`);
       removeCleanup();
       stop();
+      discord?.stop();
       twitch?.client.disconnect();
       resolve(lastKickReason);
     });

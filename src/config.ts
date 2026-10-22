@@ -40,6 +40,16 @@ export function parseCommandWhitelist(value: string | undefined): string[] {
 }
 
 export const config = {
+  discord: {
+    token: process.env.DISCORD_BOT_TOKEN || "",
+    guildId: process.env.DISCORD_GUILD_ID || "",
+    voiceChannelId: process.env.DISCORD_VOICE_CHANNEL_ID || "",
+    userId: process.env.DISCORD_ALLOWED_USER_ID || "",
+    sttModel: process.env.DISCORD_STT_MODEL || "openai/whisper-large-v3",
+    ttsEnabled: process.env.DISCORD_TTS_ENABLED === "true",
+    ttsModel: process.env.DISCORD_TTS_MODEL || "mistralai/voxtral-mini-tts-3-0",
+    ttsVoice: process.env.DISCORD_TTS_VOICE || "voice_3150",
+  },
   mc: {
     host: process.env.MC_HOST || "localhost",
     port: parseInt(process.env.MC_PORT || "25565"),

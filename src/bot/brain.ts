@@ -87,7 +87,7 @@ import type { ProviderResponseMetadata } from "../llm/provider.js";
 import { captureActionObservation } from "../data/action-observation.js";
 
 export interface ChatMessage {
-  source: "minecraft" | "twitch" | "youtube";
+  source: "minecraft" | "twitch" | "youtube" | "discord";
   username: string;
   message: string;
   timestamp: number;
