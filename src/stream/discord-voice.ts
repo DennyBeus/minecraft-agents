@@ -108,15 +108,16 @@ export async function startDiscordVoiceBridge(onTranscript: (text: string) => vo
     const timer = setTimeout(() => reject(new Error("Discord login timed out")), 20_000);
     client.once(Events.ClientReady, () => { clearTimeout(timer); resolve(); });
     client.login(cfg.token).catch((error) => { clearTimeout(timer); reject(error); });
-  });
+  }).catch((error) => { client.destroy(); throw new Error(`Discord gateway login failed: ${String(error)}`); });
   let connection: VoiceConnection;
   try {
     const guild = await client.guilds.fetch(cfg.guildId);
     const channel = await guild.channels.fetch(cfg.voiceChannelId);
     if (!channel?.isVoiceBased()) throw new Error("Configured Discord channel is not a voice channel");
     connection = joinVoiceChannel({ channelId: (channel as VoiceBasedChannel).id, guildId: guild.id, adapterCreator: guild.voiceAdapterCreator, selfDeaf: false });
+    connection.on("error", (error) => console.warn(`[Discord] Voice connection error: ${error.message}`));
     await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
-  } catch (error) { client.destroy(); throw error; }
+  } catch (error) { client.destroy(); throw new Error(`Discord voice connection failed: ${String(error)}`); }
 
   const playerQueue: { current: Promise<void> } = { current: Promise.resolve() };
   const say = (text: string) => {
