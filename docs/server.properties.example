@@ -1,0 +1,16 @@
+# Copy to server/server.properties and replace server-ip with the Spark LAN IP.
+server-port=25565
+server-ip=192.168.217.91
+motd=Minecraft AI Companion - LAN
+gamemode=survival
+difficulty=normal
+level-name=ai-world
+online-mode=false
+white-list=true
+enforce-whitelist=true
+max-players=4
+enable-rcon=false
+enable-command-block=false
+spawn-protection=0
+view-distance=8
+simulation-distance=6

@@ -69,7 +69,7 @@ export function startOverlay(port = 3001, botName = "Atlas"): OverlayInstance {
     console.error("[Overlay] Server error:", err);
   });
 
-  http.listen(port, () => {
+  http.listen(port, process.env.WEB_BIND_HOST || "0.0.0.0", () => {
     console.log(`[Overlay] Stream overlay running at http://localhost:${port}`);
   });
 

@@ -44,7 +44,7 @@ export const config = {
     host: process.env.MC_HOST || "localhost",
     port: parseInt(process.env.MC_PORT || "25565"),
     username: process.env.MC_USERNAME || "AIBot",
-    version: process.env.MC_VERSION || "1.21.4",
+    version: process.env.MC_VERSION || "1.21.11",
     auth: (process.env.MC_AUTH || "offline") as "offline" | "microsoft",
   },
   ollama: ollamaConfig,
@@ -54,6 +54,7 @@ export const config = {
     provider: llmProvider,
     model: llmProvider === "openai" ? openaiConfig.model : ollamaConfig.model,
     fastModel: llmProvider === "openai" ? openaiConfig.fastModel : ollamaConfig.fastModel,
+    maxRequestsPerRun: parseInt(process.env.LLM_MAX_REQUESTS_PER_RUN || "0"),
   },
   twitch: {
     channel: process.env.TWITCH_CHANNEL || "",
@@ -87,6 +88,8 @@ export const config = {
     idleIntervalMs: parseInt(process.env.BOT_IDLE_INTERVAL_MS || "10000"),
     /** Enable the critic step after each action (uses an extra LLM call per action). */
     criticEnabled: process.env.BOT_CRITIC_ENABLED !== "false",
+    ttsEnabled: process.env.ENABLE_TTS !== "false",
+    neuralServerEnabled: process.env.ENABLE_NEURAL_SERVER !== "false",
   },
   multiBot: {
     enabled: process.env.ENABLE_MULTI_BOT === "true",

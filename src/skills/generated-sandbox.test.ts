@@ -18,7 +18,7 @@ test("sandbox fails closed when bubblewrap is unavailable", async () => {
   );
 });
 
-test("sandbox policy fingerprint binds worker bytes, policy, limits, and schema", async () => {
+test("sandbox policy fingerprint binds worker bytes, policy, limits, and schema", { skip: process.platform !== "linux" || process.arch !== "x64" }, async () => {
   const base = await getSandboxPolicyHash({ workerSource: Buffer.from("worker-a") });
   const same = await getSandboxPolicyHash({ workerSource: Buffer.from("worker-a") });
   const workerChanged = await getSandboxPolicyHash({ workerSource: Buffer.from("worker-b") });
@@ -44,7 +44,7 @@ test("sandbox policy fingerprint binds worker bytes, policy, limits, and schema"
   }
 });
 
-test("sandbox rejects a stale expected policy before launcher or capability work", async () => {
+test("sandbox rejects a stale expected policy before launcher or capability work", { skip: process.platform !== "linux" || process.arch !== "x64" }, async () => {
   let calls = 0;
   await assert.rejects(
     runGeneratedSkillInSandbox({

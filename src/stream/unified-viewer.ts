@@ -23,7 +23,7 @@ import { getBotStatus } from "../bot/bulletin.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 
-const UNIFIED_PORT = 3000;
+const UNIFIED_PORT = parseInt(process.env.VIEWER_PORT || "3000");
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise((resolve) => {
@@ -182,7 +182,7 @@ export async function startUnifiedViewer(): Promise<boolean> {
     // ------------------------------------------------------------------
     setupRelayNamespace();
 
-    httpServer.listen(UNIFIED_PORT, () => {
+    httpServer.listen(UNIFIED_PORT, process.env.WEB_BIND_HOST || "0.0.0.0", () => {
       console.log(`[UnifiedViewer] Viewer at http://localhost:${UNIFIED_PORT}`);
     });
 

@@ -41,13 +41,13 @@ test("bed safety: a bed far from the village is refused and broken on respawn", 
   );
   assert.match(
     sleep,
-    /bedTooFarFromHome\(target\.position, STASH_POS\)/,
-    "the sleep action refuses a far bed before using it",
+    /config\.multiBot\.enabled && bedTooFarFromHome\(target\.position, STASH_POS\)/,
+    "the team sleep action refuses a far bed before using it",
   );
   const index = fs.readFileSync(path.join(__dirname, "index.ts"), "utf8");
   assert.match(
     index,
-    /const farBed = !!bed && bedTooFarFromHome\(bed\.position, home\);/,
+    /const farBed = !!bed && !!home && bedTooFarFromHome\(bed\.position, home\);/,
     "respawn safety measures the bed",
   );
   assert.match(index, /if \(bed && clustered < 3 && !farBed\)/, "a far bed is never kept");

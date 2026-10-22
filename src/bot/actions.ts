@@ -677,7 +677,7 @@ async function gatherWood(bot: Bot, count: number): Promise<string> {
   // with no saplings AND no reachable trees is doubly stuck (182 fails/hour
   // with zero plantings — the seeds have to come from somewhere). The team
   // stash banks saplings from richer times; withdraw a handful first.
-  if (!bot.inventory.items().some((i) => i.name.endsWith("_sapling"))) {
+  if (config.multiBot.enabled && !bot.inventory.items().some((i) => i.name.endsWith("_sapling"))) {
     try {
       await withdrawStash(bot, STASH_POS, "sapling", 8);
     } catch {
@@ -2344,7 +2344,7 @@ async function sleepInBed(bot: Bot): Promise<string> {
         nearestMiss = Math.min(nearestMiss, dist);
         continue;
       }
-      if (bedTooFarFromHome(target.position, STASH_POS)) {
+      if (config.multiBot.enabled && bedTooFarFromHome(target.position, STASH_POS)) {
         return bedTooFarMessage(Math.hypot(target.position.x - STASH_POS.x, target.position.z - STASH_POS.z));
       }
       await bot.lookAt(target.position.offset(0.5, 0.5, 0.5), true).catch(() => {});

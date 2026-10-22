@@ -102,7 +102,7 @@ export async function startViewer(bot: Bot, port = 3000) {
       });
     });
 
-    httpServer.listen(port, () => {
+    httpServer.listen(port, process.env.WEB_BIND_HOST || "0.0.0.0", () => {
       console.log(`[Viewer] Follow-camera viewer at http://localhost:${port}`);
       console.log(`[Viewer] Controls: click button or press C to cycle cameras`);
     });

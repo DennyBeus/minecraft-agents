@@ -200,3 +200,17 @@ test("malformed successful OpenAI response is captured before JSON parsing fails
   assert.equal(records[1].payload.raw.bodyText, "{not-json");
   setEpisodeEventRecorderForTests(null);
 });
+
+test("OpenAI transport bounds each call and does not retry a 429 response", async () => {
+  let calls = 0;
+  await assert.rejects(
+    openAITransport(BASE, async (_url, init) => {
+      calls++;
+      assert.equal(init?.signal?.aborted, false);
+      assert.equal(init?.signal instanceof AbortSignal, true);
+      return new Response("rate limited", { status: 429, statusText: "Too Many Requests" });
+    }),
+    /429 Too Many Requests/,
+  );
+  assert.equal(calls, 1);
+});

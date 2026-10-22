@@ -427,6 +427,7 @@ export class BotBrain {
     this.log = createLogger(roleConfig.name);
     this.homePos = roleConfig.homePos ?? null;
     this.IDLE_INTERVAL_MS = config.bot.idleIntervalMs ?? 10_000;
+    this.CRITIC_ENABLED = config.bot.criticEnabled;
 
     // Pre-populate failure blacklist from memory
     for (const [skill, msg] of memStore.getSessionPreconditionBlocks()) {
@@ -3007,6 +3008,7 @@ export class BotBrain {
     // the loop closes itself. Overworld gold ore breaks that circle: it sits
     // deep, the miner is already down there, and one vein is enough.
     if (
+      config.bot.allowStrategyOverrides &&
       this.roleConfig.allowedActions.includes("mine_block") &&
       /overworld/.test(String(this.bot.game.dimension)) &&
       Date.now() - this.lastGoldHuntMs > 900_000
@@ -4987,11 +4989,13 @@ export class BotBrain {
     });
 
     // TTS in background
-    this.speechGenerator(decision.thought)
-      .then((url) => {
-        if (url) speakThought(url);
-      })
-      .catch(() => {});
+    if (config.bot.ttsEnabled) {
+      this.speechGenerator(decision.thought)
+        .then((url) => {
+          if (url) speakThought(url);
+        })
+        .catch(() => {});
+    }
 
     // Unwrap invoke_skill aliasing a built-in action (e.g. {"skill":"deposit_stash"})
     // so gating and param injection below see the real action.

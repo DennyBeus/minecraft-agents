@@ -109,3 +109,10 @@ test("the prompt tells the bot not to repeat a no-op action", () => {
   assert.match(p, /Banked nothing/);
   assert.match(p, /do NOT\s*\n?repeat it|do NOT repeat it/);
 });
+
+test("single-agent prompt uses fresh-world survival instructions", () => {
+  const p = buildStrategicPrompt({ name: "Atlas", personality: "explorer", role: "Survival companion", allowedActions: ["craft", "gather_wood"] });
+  assert.match(p, /keep acting when nobody speaks/);
+  assert.match(p, /4 planks → crafting_table/);
+  assert.doesNotMatch(p, /withdraw_stash|deposit_stash|give_item/);
+});

@@ -136,6 +136,30 @@ export const ATLAS_CONFIG: BotRoleConfig = {
     "You are the PORTAL KEEPER. The portal frame at 278 14 -243 needs its LAST block: invoke_skill build_nether_portal. Keep a bucket and flint_and_steel from the stash. Deposit everything you do not carry as kit.",
 };
 
+/** Fresh-world, single-agent profile. Keeps Atlas's identity and memory file. */
+export const SOLO_ATLAS_CONFIG: BotRoleConfig = {
+  ...ATLAS_CONFIG,
+  viewerPort: parseInt(process.env.VIEWER_PORT || "3020"),
+  role: "Survival companion",
+  stashPos: undefined,
+  safeSpawn: undefined,
+  seasonGoal: undefined,
+  allowedActions: [...ATLAS_CONFIG.allowedActions, "craft", "place_block"],
+  allowedSkills: [
+    ...ATLAS_CONFIG.allowedSkills,
+    "hunt_food",
+    "build_house",
+    "smelt_ores",
+    "light_area",
+  ],
+  priorities: `SURVIVAL PRIORITIES:
+1. Flee from immediate danger when health is low.
+2. Gather wood and craft basic tools before deep exploration. Use the exact wood type in your inventory (for example, spruce_log makes spruce_planks, not oak_planks). The craft count is recipe repetitions.
+3. Find food when hungry; eat only food already in inventory.
+4. Build a shelter and improve equipment with resources you collect.
+5. Explore and remember useful locations. Respond to player requests.`,
+};
+
 /** Flora: Farmer, crafter, and base keeper. Stays near home. */
 export const FLORA_CONFIG: BotRoleConfig = {
   name: "Flora",

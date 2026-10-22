@@ -1,5 +1,4 @@
 import mineflayer from "mineflayer";
-import { STASH_POS } from "./role.js";
 import { bedTooFarFromHome } from "./bed-safety.js";
 import { installPhysicsEpsilon } from "./physics-epsilon.js";
 import { Vec3 } from "vec3";
@@ -69,7 +68,9 @@ const stallRelogAt = new Map<string, number>();
 export async function createBot(events: BrainEvents, roleConfig: BotRoleConfig = ATLAS_CONFIG) {
   if (installPhysicsEpsilon()) console.log("[Physics] collision epsilon installed (1e-7)");
   startScoreboard();
-  ensureNeuralServer().catch((e) => console.warn("[Bot] Neural spawn error:", e));
+  if (config.bot.neuralServerEnabled) {
+    ensureNeuralServer().catch((e) => console.warn("[Bot] Neural spawn error:", e));
+  }
 
   // One row per swarm start. Cheap, and it is the only record of whether any
   // of this works. Must never take the swarm down with it — a missing server
@@ -351,6 +352,16 @@ export async function createBot(events: BrainEvents, roleConfig: BotRoleConfig =
     capPathfinder();
   });
 
+  // Paper 1.21.11 uses the float width 0.6F for the player's hitbox. The
+  // physics library starts with the double 0.3 as half-width, which can put
+  // the bot fractionally inside a block and trigger repeated corrections.
+  bot.on("spawn", () => {
+    if (config.mc.version === "1.21.11") {
+      (bot.physics as typeof bot.physics & { playerHalfWidth: number }).playerHalfWidth = Math.fround(0.6) / 2;
+      console.log(`[Physics] ${roleConfig.name}: aligned player hitbox with Minecraft 1.21.11`);
+    }
+  });
+
   // ── Create the event-driven brain ──
   const brain = new BotBrain(bot, roleConfig, events, memStore);
 
@@ -400,8 +411,8 @@ export async function createBot(events: BrainEvents, roleConfig: BotRoleConfig =
       // count: it keeps the bot out there with the night mobs and away from
       // its work. Runs 803 and 804, Forge at the plains village bed 650
       // blocks east, sixteen deaths in two hours.
-      const home = roleConfig.stashPos ?? STASH_POS;
-      const farBed = !!bed && bedTooFarFromHome(bed.position, home);
+      const home = roleConfig.stashPos ?? roleConfig.homePos;
+      const farBed = !!bed && !!home && bedTooFarFromHome(bed.position, home);
       if (bed && farBed) {
         console.log(
           `[Bot] ${roleConfig.name} respawned at a bed ${Math.round(Math.hypot(bed.position.x - home.x, bed.position.z - home.z))} blocks from the village at ${bed.position} — breaking it so the next respawn is home`,
@@ -844,7 +855,7 @@ export async function createBot(events: BrainEvents, roleConfig: BotRoleConfig =
       (bot as unknown as { physicsEnabled: boolean }).physicsEnabled = true;
       console.log(`[Respawn] ${roleConfig.name} chunk wait failed: ${(e as Error).message}`);
     }
-    if (roleConfig.username === "Atlas") {
+    if (roleConfig.username === "Atlas" && config.bot.allowInterventions) {
       bot.chat("/gamerule keepInventory true");
       await new Promise((r) => setTimeout(r, 500));
       bot.chat("/gamerule doMobSpawning true");

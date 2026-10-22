@@ -3,7 +3,7 @@ import { createTwitchChat } from "./stream/twitch.js";
 import { startOverlay, addChatMessage } from "./stream/overlay.js";
 import { config } from "./config.js";
 import { getDynamicSkillNames, loadDynamicSkills } from "./skills/dynamic-loader.js";
-import { BOT_ROSTER, BotRoleConfig } from "./bot/role.js";
+import { BOT_ROSTER, SOLO_ATLAS_CONFIG, BotRoleConfig } from "./bot/role.js";
 import { startUnifiedViewer } from "./stream/unified-viewer.js";
 import { abortActiveSkill, getActiveSkillName } from "./skills/executor.js";
 import type { Bot } from "mineflayer";
@@ -194,7 +194,7 @@ async function main() {
     endpoint: config.llm.provider === "openai" ? config.openai.baseUrl : config.ollama.host,
     multiBotEnabled: config.multiBot.enabled,
     requestedBotCount: config.multiBot.count,
-    roster: BOT_ROSTER,
+    roster: config.multiBot.enabled ? BOT_ROSTER.slice(0, config.multiBot.count) : [SOLO_ATLAS_CONFIG],
     builtInSkillNames: getBuiltInSkillNames(),
     loadedDynamicSkillNames: getDynamicSkillNames(),
     generatedSkillNames: getGeneratedSkillNames(),
@@ -209,7 +209,13 @@ async function main() {
 
   if (!config.multiBot.enabled) {
     // Single bot mode — just Atlas
-    await runBotLoop(BOT_ROSTER[0]);
+    try {
+      const { startDashboard } = await import("./stream/dashboard.js");
+      startDashboard([SOLO_ATLAS_CONFIG]);
+    } catch (err) {
+      console.warn("[Main] Dashboard failed to start:", err);
+    }
+    await runBotLoop(SOLO_ATLAS_CONFIG);
     return;
   }
 

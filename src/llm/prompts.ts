@@ -43,7 +43,7 @@ const ACTION_SIGNATURES: Record<string, string> = {
   mine_block: 'mine_block {"blockType":"iron_ore"}',
   go_to: 'go_to {"x":0,"y":64,"z":0}',
   explore: 'explore {"direction":"north"}',
-  craft: 'craft {"item":"oak_planks","count":4}',
+  craft: 'craft {"item":"crafting_table","count":1}',
   eat: "eat {}",
   attack: "attack {}",
   flee: "flee {}",
@@ -96,13 +96,14 @@ export function resolveAllowedActions(roleActions?: string[]): string[] {
 
 export function buildStrategicPrompt(role: RoleContext): string {
   const name = role.name;
+  const solo = role.role === "Survival companion";
   // Runs 619 to 629: with "eat" off the menu the model still picked it 16 to
   // 30 times an hour because this section told it to. Say what is true.
   const foodSection = role.eatBlocked
     ? `FOOD / DON'T STARVE:
 - You have NO food aboard and "eat" is unavailable this turn. Get food first:
   invoke_skill {"skill":"hunt_food"} for animals, invoke_skill {"skill":"go_fishing"}
-  near open water, or withdraw_stash {"item":"bread"} at the stash. Do not pick eat.`
+  near open water${solo ? "." : ', or withdraw_stash {"item":"bread"} at the stash.'} Do not pick eat.`
     : `FOOD / DON'T STARVE:
 - If hunger is low: eat {} (eats the best food you have, including raw meat).
 - NO food in inventory? attack {} — when no monster is near it HUNTS the nearest
@@ -110,7 +111,9 @@ export function buildStrategicPrompt(role: RoleContext): string {
   you starve, not at 0 hunger.`;
 
   // Build action list — role-specific if configured, otherwise full list
-  const actions = renderActions(resolveAllowedActions(role.allowedActions));
+  const actions = renderActions(
+    resolveAllowedActions(role.allowedActions).filter((action) => !solo || !["give_item", "deposit_stash", "withdraw_stash"].includes(action)),
+  );
 
   // Skills list
   const builtinSkills = role.allowedSkills?.length ? role.allowedSkills.join(", ") : "";
@@ -135,7 +138,7 @@ export function buildStrategicPrompt(role: RoleContext): string {
     ? `🎯 MISSION: ${role.seasonGoal}\nEvery decision should advance this mission.\n\n`
     : "";
 
-  return `${missionLine}You are ${name}, an AI playing Minecraft on a livestream. Chat controls you.
+  return `${missionLine}You are ${name}, ${solo ? "an autonomous Minecraft survival companion. Respond to player chat, and keep acting when nobody speaks." : "an AI playing Minecraft on a livestream. Chat controls you."}
 ${role.personality}
 
 ${role.role ? `ROLE: ${role.role}\n` : ""}ACTIONS: ${actions}
@@ -154,7 +157,7 @@ repeat it; go do the HOW step instead.
 
 CRAFTING BASICS:
 - Logs → planks (1 log = 4 planks). Planks → sticks (2 planks = 4 sticks).
-- 3 planks + 2 sticks → wooden_pickaxe. 2 planks → crafting_table.
+- 3 planks + 2 sticks → wooden_pickaxe. 4 planks → crafting_table.
 - Wool from killing sheep (0-2 per sheep). 3 wool + 3 planks → bed.
 - Use exact Minecraft IDs: oak_planks, stick, wooden_pickaxe, etc.
 
@@ -178,11 +181,11 @@ RULES:
 - If an action failed recently, try something COMPLETELY DIFFERENT.
 - FOCUS: Finish one goal before starting another. Plan 3-5 steps ahead.
 - PREFER SKILLS over manual actions when available.
-- RESOURCE SHARING — USE THE STASH, NOT CHAT: The Stash is the team's shared
+${solo ? "- There is no shared stash or team yet. Gather and craft what you need in this world." : `- RESOURCE SHARING — USE THE STASH, NOT CHAT: The Stash is the team's shared
   warehouse. If you NEED an item, withdraw_stash it. If you have SURPLUS,
   deposit_stash it. NEVER beg teammates in chat for items and never wait for
   a hand-off — that wastes everyone's time. Producers deposit, consumers
-  withdraw. give_item is only for emergencies when the stash is empty.
+  withdraw. give_item is only for emergencies when the stash is empty.`}
 
 RESPONSE FORMAT:
 {"thought":"Brief entertaining narration","action":"action_name","params":{...},"goal":"Current objective","goalSteps":5}

@@ -244,6 +244,7 @@ export async function openAITransport(
   const { baseUrl, apiKey } = config.openai;
   const res = await fetchImpl(baseUrl.replace(/\/+$/, "") + "/chat/completions", {
     method: "POST",
+    signal: AbortSignal.timeout(30_000),
     headers: {
       "Content-Type": "application/json",
       Authorization: "Bearer " + apiKey,
@@ -281,13 +282,24 @@ async function ollamaTransport(req: ChatRequest): Promise<ProviderTransportResul
 }
 
 /** Send a chat request to whichever provider is configured. */
+let providerRequestsThisRun = 0;
 export async function chat(req: ChatRequest): Promise<ChatResponse> {
+  const limit = config.llm.maxRequestsPerRun;
+  if (limit > 0 && providerRequestsThisRun >= limit) {
+    console.error(`[LLM] Request limit ${limit} reached; stopping agent.`);
+    process.kill(process.pid, "SIGTERM");
+    throw new Error("LLM request limit reached");
+  }
+  providerRequestsThisRun++;
   if (config.llm.provider === "openai") return chatWithTransport(req, "openai", openAITransport);
   return chatWithTransport(req, "ollama", ollamaTransport);
 }
 
 /** Fail at startup, not on the first decision. */
 export function assertProviderConfigured(): void {
+  if (!Number.isSafeInteger(config.llm.maxRequestsPerRun) || config.llm.maxRequestsPerRun < 0) {
+    throw new Error("LLM_MAX_REQUESTS_PER_RUN must be a non-negative integer");
+  }
   if (config.llm.provider !== "openai") return;
   if (!config.openai.apiKey) {
     throw new Error(

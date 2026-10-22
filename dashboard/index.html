@@ -262,7 +262,7 @@ function selectBot(idx) {
   // Unified viewer: all bots share a single viewer server on port 3000.
   // Load the iframe once, then use postMessage to switch bots without reloading
   // the page (no re-download of JS/textures).
-  var viewerUrl = 'http://' + location.hostname + ':3000';
+  var viewerUrl = 'http://' + location.hostname + ':' + bots[idx].viewerPort;
 
   if (!viewerLoaded) {
     // First time: load the viewer iframe with the selected bot as a hash hint

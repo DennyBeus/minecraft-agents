@@ -123,6 +123,10 @@ export function getTechTreeLine(bot: Bot, role?: string): string {
   try {
     inv = new Set(bot.inventory.items().map((i) => i.name));
     for (const i of bot.inventory.items()) counts.set(i.name, (counts.get(i.name) ?? 0) + i.count);
+    // A placed table is still available even after it leaves the inventory.
+    if (!inv.has("crafting_table") && bot.findBlock({ matching: (block) => block.name === "crafting_table", maxDistance: 32 })) {
+      inv.add("crafting_table");
+    }
   } catch {
     return "";
   }

@@ -44,7 +44,7 @@ export function startDashboard(roster: BotRoleConfig[]) {
     console.error("[Dashboard] Server error:", err);
   });
 
-  http.listen(DASHBOARD_PORT, () => {
+  http.listen(DASHBOARD_PORT, process.env.WEB_BIND_HOST || "0.0.0.0", () => {
     console.log(`[Dashboard] Mission Control at http://localhost:${DASHBOARD_PORT}`);
   });
 }
