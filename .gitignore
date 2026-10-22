@@ -1,7 +1,6 @@
 node_modules/
 dist/
 .env
-/windows-voice.env
 /server/
 *.jar
 logs/*
@@ -25,3 +24,4 @@ logs/known-nests.json
 
 # world backups (large archives; see ops/README.md)
 backups/
+/windows-voice.env

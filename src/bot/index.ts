@@ -1011,59 +1011,10 @@ export async function createBot(events: BrainEvents, roleConfig: BotRoleConfig =
       });
   });
 
-  let followingPlayer: string | null = null;
-  let followCheck: ReturnType<typeof setInterval> | null = null;
-  const stopFollowing = (): boolean => {
-    if (!followingPlayer) return false;
-    followingPlayer = null;
-    if (followCheck) clearInterval(followCheck);
-    followCheck = null;
-    bumpNavGeneration(bot);
-    bot.pathfinder.setGoal(null);
-    bot.clearControlStates();
-    brain.resume();
-    console.log(`[Follow] ${bot.username} stopped following`);
-    return true;
-  };
-  const followPlayer = (playerName: string): string => {
-    const target = bot.players[playerName]?.entity;
-    if (!target) return `Не вижу ${playerName} рядом в Minecraft. Подойдите ближе и повторите команду.`;
-    stopFollowing();
-    followingPlayer = playerName;
-    brain.pause();
-    abortActiveSkill(bot);
-    bumpNavGeneration(bot);
-    bot.pathfinder.setGoal(null);
-    bot.clearControlStates();
-    bot.pathfinder.setMovements(safeMoves(bot));
-    bot.pathfinder.setGoal(new goals.GoalFollow(target, 2), true);
-    let trackedTarget = target;
-    let missingSince = 0;
-    followCheck = setInterval(() => {
-      if (!followingPlayer) return;
-      const current = bot.players[followingPlayer]?.entity;
-      if (current) {
-        missingSince = 0;
-        if (current !== trackedTarget) {
-          trackedTarget = current;
-          bot.pathfinder.setGoal(new goals.GoalFollow(current, 2), true);
-        }
-      } else {
-        missingSince ||= Date.now();
-        if (Date.now() - missingSince > 15_000) stopFollowing();
-      }
-    }, 2000);
-    console.log(`[Follow] ${bot.username} following ${playerName}`);
-    return `Иду за вами, ${playerName}. Скажите «Атлас, стой», чтобы остановиться.`;
-  };
-
   return {
     bot,
     queueChat: (msg: ChatMessage) => brain.queueChat(msg),
-    followPlayer,
-    stopFollowing,
     stop: () => {
-      stopFollowing();
       brain.stop();
       bot.quit();
     },

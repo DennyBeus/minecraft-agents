@@ -785,13 +785,11 @@ export class BotBrain {
     this.pendingChatMessages.push(msg);
     if (this.pendingChatMessages.length > 10) this.pendingChatMessages.shift();
 
-    // The Discord operator speaks to control Atlas, so treat those messages as
-    // immediate planning input instead of generating a chat-only reply.
+    // Push chat event — paid messages are higher priority
     const isPaid = (msg as any).tier === "paid";
-    const isOperator = msg.source === "discord";
     this.pushEvent({
-      type: isPaid || isOperator ? "strategic" : "chat",
-      priority: isPaid || isOperator ? 1 : 4,
+      type: isPaid ? "strategic" : "chat", // Paid messages trigger full re-planning
+      priority: isPaid ? 1 : 4,
       data: msg,
       timestamp: Date.now(),
     });
@@ -819,8 +817,7 @@ export class BotBrain {
     // Deduplicate: don't queue same type if already pending with equal/higher priority
     const existingIdx = this.eventQueue.findIndex((e) => e.type === event.type);
     if (existingIdx !== -1) {
-      const isLatestOperatorCommand = event.type === "strategic" && (event.data as ChatMessage | undefined)?.source === "discord";
-      if (isLatestOperatorCommand || event.priority < this.eventQueue[existingIdx].priority) {
+      if (event.priority < this.eventQueue[existingIdx].priority) {
         this.eventQueue.splice(existingIdx, 1); // Replace with higher priority
       } else {
         return; // Already have an equal/higher priority event of this type
@@ -1150,14 +1147,8 @@ export class BotBrain {
 
     // Pending chat messages
     if (this.pendingChatMessages.length > 0) {
-      const operatorMessages = this.pendingChatMessages.filter((m) => m.source === "discord");
-      const otherMessages = this.pendingChatMessages.filter((m) => m.source !== "discord");
-      if (operatorMessages.length) {
-        ctx += `\n\nLATEST OPERATOR VOICE COMMAND (follow when safe; prefer its requested task over the previous goal):\n${operatorMessages.at(-1)!.message}`;
-      }
-      if (otherMessages.length) {
-        ctx += `\n\nMESSAGES FROM PLAYERS/VIEWERS:\n${otherMessages.map((m) => `[${m.source}] ${m.username}: ${m.message}`).join("\n")}`;
-      }
+      const chatStr = this.pendingChatMessages.map((m) => `[${m.source}] ${m.username}: ${m.message}`).join("\n");
+      ctx += `\n\nMESSAGES FROM PLAYERS/VIEWERS:\n${chatStr}`;
       this.pendingChatMessages.length = 0;
     }
 
@@ -1314,7 +1305,7 @@ export class BotBrain {
 
   private async handleStrategic(event: BrainEvent): Promise<void> {
     const now = Date.now();
-    if ((event.data as ChatMessage | undefined)?.source !== "discord" && now - this.lastStrategicMs < this.STRATEGIC_COOLDOWN_MS) return;
+    if (now - this.lastStrategicMs < this.STRATEGIC_COOLDOWN_MS) return;
     this.lastStrategicMs = now;
 
     // Safety overrides first

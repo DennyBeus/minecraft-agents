@@ -41,9 +41,6 @@ export function parseCommandWhitelist(value: string | undefined): string[] {
 
 export const config = {
   discord: {
-    voiceRemote: process.env.DISCORD_VOICE_REMOTE === "true",
-    relaySecret: process.env.VOICE_BRIDGE_SECRET || "",
-    relayPort: parseInt(process.env.VOICE_RELAY_PORT || "3090"),
     token: process.env.DISCORD_BOT_TOKEN || "",
     guildId: process.env.DISCORD_GUILD_ID || "",
     voiceChannelId: process.env.DISCORD_VOICE_CHANNEL_ID || "",

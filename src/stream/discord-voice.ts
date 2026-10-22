@@ -16,6 +16,8 @@ import { config } from "../config.js";
 
 const MAX_PCM_BYTES = 48_000 * 2 * 2 * 12;
 const MIN_PCM_BYTES = 48_000 * 2 * 2 * 0.35;
+const log = (message: string) => console.log(`[Discord] ${new Date().toISOString()} ${message}`);
+const warn = (message: string, error?: unknown) => console.warn(`[Discord] ${new Date().toISOString()} ${message}`, error ?? "");
 
 /** Discord sends 48 kHz stereo PCM after Opus decoding; Whisper accepts 16 kHz mono WAV. */
 export function pcmToWav(pcm: Buffer): Buffer {
@@ -43,6 +45,8 @@ export function pcmToWav(pcm: Buffer): Buffer {
 }
 
 export async function transcribeDiscordPcm(pcm: Buffer): Promise<string> {
+  const started = Date.now();
+  log(`STT request: ${(pcm.length / 192_000).toFixed(1)}s, model=${config.discord.sttModel}`);
   const response = await fetch(`${config.openai.baseUrl.replace(/\/$/, "")}/audio/transcriptions`, {
     method: "POST",
     headers: { Authorization: `Bearer ${config.openai.apiKey}`, "Content-Type": "application/json" },
@@ -53,6 +57,7 @@ export async function transcribeDiscordPcm(pcm: Buffer): Promise<string> {
     }),
     signal: AbortSignal.timeout(30_000),
   });
+  log(`STT response: HTTP ${response.status}, ${Date.now() - started}ms`);
   if (!response.ok) throw new Error(`OpenRouter STT: HTTP ${response.status}`);
   const result = (await response.json()) as { text?: unknown };
   if (typeof result.text !== "string") throw new Error("OpenRouter STT: missing transcript");
@@ -60,14 +65,19 @@ export async function transcribeDiscordPcm(pcm: Buffer): Promise<string> {
 }
 
 async function synthesize(text: string): Promise<Buffer> {
+  const started = Date.now();
+  log(`TTS request: ${text.length} chars, model=${config.discord.ttsModel}`);
   const response = await fetch(`${config.openai.baseUrl.replace(/\/$/, "")}/audio/speech`, {
     method: "POST",
     headers: { Authorization: `Bearer ${config.openai.apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({ model: config.discord.ttsModel, input: text.slice(0, 500), voice: config.discord.ttsVoice, response_format: "mp3" }),
     signal: AbortSignal.timeout(30_000),
   });
+  log(`TTS response: HTTP ${response.status}, ${Date.now() - started}ms`);
   if (!response.ok) throw new Error(`OpenRouter TTS: HTTP ${response.status}`);
-  return Buffer.from(await response.arrayBuffer());
+  const audio = Buffer.from(await response.arrayBuffer());
+  log(`TTS audio: ${audio.length} bytes`);
+  return audio;
 }
 
 function playMp3(connection: VoiceConnection, mp3: Buffer): Promise<void> {
@@ -76,6 +86,7 @@ function playMp3(connection: VoiceConnection, mp3: Buffer): Promise<void> {
     const player = createAudioPlayer();
     const subscription = connection.subscribe(player);
     let settled = false;
+    let ffmpegError = "";
     const finish = (error?: Error) => {
       if (settled) return;
       settled = true;
@@ -84,8 +95,10 @@ function playMp3(connection: VoiceConnection, mp3: Buffer): Promise<void> {
       if (error) reject(error); else resolve();
     };
     ffmpeg.on("error", finish);
+    ffmpeg.stderr.on("data", (chunk: Buffer) => { ffmpegError = (ffmpegError + chunk.toString()).slice(-2048); });
+    ffmpeg.on("exit", (code, signal) => { if (code && !signal) finish(new Error(`ffmpeg exited with code ${code}: ${ffmpegError.trim()}`)); });
     player.on("error", finish);
-    player.on(AudioPlayerStatus.Idle, () => finish());
+    player.on(AudioPlayerStatus.Idle, () => { log("Voice playback finished"); finish(); });
     ffmpeg.stdin.end(mp3);
     player.play(createAudioResource(ffmpeg.stdout, { inputType: StreamType.Raw }));
   });
@@ -93,10 +106,10 @@ function playMp3(connection: VoiceConnection, mp3: Buffer): Promise<void> {
 
 export interface DiscordVoiceBridge { say(text: string): void; stop(): void }
 
-export async function startDiscordVoiceBridge(onTranscript: (text: string) => string | void | Promise<string | void>): Promise<DiscordVoiceBridge | null> {
+export async function startDiscordVoiceBridge(onTranscript: (text: string) => void): Promise<DiscordVoiceBridge | null> {
   const cfg = config.discord;
   if (!cfg.token || !cfg.guildId || !cfg.voiceChannelId || !cfg.userId) {
-    console.log("[Discord] Voice bridge disabled; configure token, guild, voice channel and allowed user ID.");
+    log("Voice bridge disabled; configure token, guild, voice channel and allowed user ID.");
     return null;
   }
   if (!config.openai.apiKey) throw new Error("Discord voice requires the OpenRouter API key");
@@ -104,6 +117,9 @@ export async function startDiscordVoiceBridge(onTranscript: (text: string) => st
     throw new Error("Discord guild, channel and user IDs must be numeric IDs");
   }
   const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] });
+  client.on(Events.Error, (error) => warn("Gateway error", error));
+  client.on(Events.Warn, (message) => warn(`Gateway warning: ${message}`));
+  log(`Connecting to Discord gateway; proxy=${process.env.HTTPS_PROXY ? "configured" : "absent"}`);
   await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("Discord login timed out")), 20_000);
     client.once(Events.ClientReady, () => { clearTimeout(timer); resolve(); });
@@ -115,8 +131,10 @@ export async function startDiscordVoiceBridge(onTranscript: (text: string) => st
     const channel = await guild.channels.fetch(cfg.voiceChannelId);
     if (!channel?.isVoiceBased()) throw new Error("Configured Discord channel is not a voice channel");
     connection = joinVoiceChannel({ channelId: (channel as VoiceBasedChannel).id, guildId: guild.id, adapterCreator: guild.voiceAdapterCreator, selfDeaf: false });
-    connection.on("error", (error) => console.warn(`[Discord] Voice connection error: ${error.message}`));
+    connection.on("error", (error) => warn("Voice connection error", error));
+    connection.on("stateChange", (previous, next) => log(`Voice connection: ${previous.status} -> ${next.status}`));
     await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
+    log(`Voice connection ready; channel=${cfg.voiceChannelId}`);
   } catch (error) { client.destroy(); throw new Error(`Discord voice connection failed: ${String(error)}`); }
 
   const playerQueue: { current: Promise<void> } = { current: Promise.resolve() };
@@ -125,13 +143,11 @@ export async function startDiscordVoiceBridge(onTranscript: (text: string) => st
     playerQueue.current = playerQueue.current.then(async () => {
       const mp3 = await synthesize(text);
       await playMp3(connection, mp3);
-    }).catch((error) => console.warn(`[Discord] Voice reply failed: ${String(error)}`));
+    }).catch((error) => warn("Voice reply failed", error));
   };
   let stopped = false;
   let capturing = false;
   let processing = false;
-  let lastAudioAt = Date.now();
-  let lastRejoinAt = Date.now();
   let udpPackets = 0;
   let trackedUdp: { on(event: string, listener: () => void): void } | undefined;
   const trackUdp = () => {
@@ -142,22 +158,12 @@ export async function startDiscordVoiceBridge(onTranscript: (text: string) => st
     udp.on("message", () => { udpPackets++; });
   };
   trackUdp();
-  connection.on("stateChange", (oldState, newState) => {
-    if (oldState.status !== newState.status) console.log(`[Discord] Voice connection: ${oldState.status} -> ${newState.status}`);
-    trackUdp();
-  });
-  const receiveWatchdog = setInterval(() => {
+  connection.on("stateChange", trackUdp);
+  const diagnostics = setInterval(() => {
     if (stopped) return;
-    const operatorPresent = client.guilds.cache.get(cfg.guildId)?.voiceStates.cache.get(cfg.userId)?.channelId === cfg.voiceChannelId;
     trackUdp();
-    if (operatorPresent) {
-      const mapped = Boolean(connection.receiver.ssrcMap.get(cfg.userId));
-      console.log(`[Discord] Receive status: ${connection.state.status}, UDP packets: ${udpPackets}, operator SSRC: ${mapped}`);
-    }
-    if (!operatorPresent || Date.now() - lastAudioAt < 120_000 || Date.now() - lastRejoinAt < 120_000) return;
-    lastRejoinAt = Date.now();
-    console.warn(`[Discord] No incoming audio for 2 minutes while operator is present; refreshing voice connection`);
-    connection.rejoin();
+    const operatorPresent = client.guilds.cache.get(cfg.guildId)?.voiceStates.cache.get(cfg.userId)?.channelId === cfg.voiceChannelId;
+    if (operatorPresent) log(`Receive status: ${connection.state.status}, UDP packets=${udpPackets}, operator SSRC=${Boolean(connection.receiver.ssrcMap.get(cfg.userId))}, capturing=${capturing}, queued=${pending.length}`);
   }, 30_000);
   const pending: Buffer[] = [];
   const processQueue = async () => {
@@ -168,16 +174,16 @@ export async function startDiscordVoiceBridge(onTranscript: (text: string) => st
         const text = await transcribeDiscordPcm(pending.shift()!);
         if (stopped) break;
         if (!text) continue;
-        console.log(`[Discord] ${cfg.userId}: ${text}`);
-        const reply = await onTranscript(text);
-        say(reply || "Слышу вас. Передаю задание Атласу.");
-      } catch (error) { console.warn(`[Discord] Transcription failed: ${String(error)}`); }
+        log(`Transcript from ${cfg.userId}: ${text}`);
+        onTranscript(text);
+        say("Слышу вас. Передаю задание Атласу.");
+      } catch (error) { warn("Transcription or command handling failed", error); }
     }
     processing = false;
   };
   connection.receiver.speaking.on("start", (userId) => {
     if (stopped || userId !== cfg.userId || capturing) return;
-    lastAudioAt = Date.now();
+    log(`Speech started: user=${userId}`);
     capturing = true;
     const opus = connection.receiver.subscribe(userId, { end: { behavior: EndBehaviorType.AfterSilence, duration: 800 } });
     const decoder = new prism.opus.Decoder({ rate: 48_000, channels: 2, frameSize: 960 });
@@ -185,19 +191,20 @@ export async function startDiscordVoiceBridge(onTranscript: (text: string) => st
     let bytes = 0;
     opus.pipe(decoder);
     decoder.on("data", (chunk: Buffer) => {
-      if (bytes + chunk.length > MAX_PCM_BYTES) { opus.destroy(); return; }
+      if (bytes + chunk.length > MAX_PCM_BYTES) { warn("Speech exceeded 12s; discarding segment"); opus.destroy(); return; }
       chunks.push(chunk);
       bytes += chunk.length;
     });
-    decoder.on("error", (error) => { capturing = false; console.warn(`[Discord] Decode error: ${error.message}`); });
+    decoder.on("error", (error) => { capturing = false; warn("Opus decode error", error); });
     decoder.on("end", () => {
       capturing = false;
-      if (bytes < MIN_PCM_BYTES || pending.length >= 3) return;
-      console.log(`[Discord] Captured ${(bytes / 192_000).toFixed(1)}s of speech; transcribing`);
+      log(`Speech ended: ${(bytes / 192_000).toFixed(1)}s, queued=${pending.length}`);
+      if (bytes < MIN_PCM_BYTES) { log("Speech too short; discarded"); return; }
+      if (pending.length >= 3) { warn("STT queue full; discarded speech"); return; }
       pending.push(Buffer.concat(chunks, bytes));
       void processQueue();
     });
   });
-  console.log(`[Discord] Listening in voice channel ${cfg.voiceChannelId} for user ${cfg.userId}`);
-  return { say, stop: () => { if (stopped) return; stopped = true; clearInterval(receiveWatchdog); pending.length = 0; connection.destroy(); client.destroy(); } };
+  log(`Listening in voice channel ${cfg.voiceChannelId} for user ${cfg.userId}`);
+  return { say, stop: () => { if (stopped) return; stopped = true; clearInterval(diagnostics); pending.length = 0; connection.destroy(); client.destroy(); } };
 }

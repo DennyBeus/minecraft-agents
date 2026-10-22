@@ -48,6 +48,29 @@ npm start
 
 `npm start` включает проверку TLS-сертификата для Node.js, даже если в общем окружении Spark она отключена.
 
+Для самостоятельного теста в двух терминалах на Spark используйте команды ниже. Minecraft-сервер и Atlas запускаются отдельно. В третьем терминале можно следить за журналом. Токен Discord и ключ OpenRouter остаются в `.env`; не публикуйте этот файл и полный журнал без проверки.
+
+**Терминал 1 — Paper:**
+
+```bash
+cd /home/denny/Projects/develop/minecraft-agents/server
+java -Xms1G -Xmx2G -jar paper.jar --nogui
+```
+
+Дождитесь строки `Done`. **Терминал 2 — Atlas:**
+
+```bash
+cd /home/denny/Projects/develop/minecraft-agents
+export HTTP_PROXY=http://127.0.0.1:8080
+export HTTPS_PROXY=http://127.0.0.1:8080
+export ALL_PROXY=http://127.0.0.1:8080
+export NO_PROXY=localhost,127.0.0.1,::1,192.168.217.91
+mkdir -p logs
+npm start 2>&1 | tee "logs/atlas-$(date +%Y%m%d-%H%M%S).log"
+```
+
+Зайдите в голосовой канал Discord и произнесите «Атлас, собери дерево». Строка `Transcript from` означает, что речь распознана; `Voice playback finished` — что ответ отправлен в голосовой канал. Если видите `Voice connection ready`, но счётчик `UDP packets` не растёт во время речи, до Atlas не доходят голосовые пакеты. HTTP-прокси через `127.0.0.1:8080` обслуживает API и WebSocket, но не UDP Discord. Для остановки нажмите `Ctrl+C` в терминале Atlas, затем в консоли Paper введите `stop` и дождитесь сохранения мира. При запуске через `tee` убедитесь, что процесс Atlas завершился: `pgrep -af 'src/index.ts|paper.jar'`.
+
 На Windows откройте Minecraft Java Edition **1.21.11** со своими шейдерами, «Сетевая игра» → «Прямое подключение» → `192.168.217.91:25565`. Напишите в чате, например, `Atlas, помоги собрать дерево` или `Atlas, что ты делаешь?`. Команды с `!` работают только для ников в `BOT_COMMAND_WHITELIST`.
 
 Mission Control: `http://192.168.217.91:3010`; 3D viewer: `http://192.168.217.91:3020`; overlay: `http://192.168.217.91:3001`. Они привязаны к LAN-адресу через `WEB_BIND_HOST`. На данной машине порт 3000 уже занят другим процессом, поэтому выбран 3020. Эти интерфейсы не имеют собственной аутентификации — используйте только доверенную LAN.
