@@ -163,6 +163,7 @@ export async function startDiscordVoiceBridge(onTranscript: (text: string) => vo
     decoder.on("end", () => {
       capturing = false;
       if (bytes < MIN_PCM_BYTES || pending.length >= 3) return;
+      console.log(`[Discord] Captured ${(bytes / 192_000).toFixed(1)}s of speech; transcribing`);
       pending.push(Buffer.concat(chunks, bytes));
       void processQueue();
     });
